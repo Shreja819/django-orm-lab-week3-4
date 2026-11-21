@@ -1,33 +1,61 @@
 """Part 6: Advanced Challenge Exercises (Q objects & F expressions).
 
-Setup (once):
-  1. 'challenges' must be in INSTALLED_APPS (training_system/settings.py)
-  2. python manage.py makemigrations challenges
-  3. python manage.py migrate
-Run from the project root:
-    python part6_challenges.py          # clean output, repeatable (changes are rolled back)
-    python part6_challenges.py --keep   # keep the sample data and changes
+Standalone script: it does NOT need a 'challenges' app, migrations or your
+project database. It creates the Category/Product tables in a temporary
+in-memory SQLite database, runs the four challenges, and then discards it.
+
+Run from anywhere (the virtual environment must be active):
+    python part6_challenges.py
 """
-import os
 import sys
 from decimal import Decimal
 
 import django
+from django.conf import settings
 
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "training_system.settings")
+if not settings.configured:
+    settings.configure(
+        DATABASES={"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:"}},
+        INSTALLED_APPS=[],
+        DEFAULT_AUTO_FIELD="django.db.models.BigAutoField",
+        USE_TZ=True,
+    )
 django.setup()
 
-from django.db import transaction  # noqa: E402
+from django.db import connection, models, transaction  # noqa: E402
 from django.db.models import Case, DecimalField, F, Q, When  # noqa: E402
 from django.db.models.lookups import GreaterThan  # noqa: E402
 
-from challenges.models import Category, Product  # noqa: E402
 
-KEEP = "--keep" in sys.argv
+# ------------------------------------------------------------ schema (from the lab sheet)
+class Category(models.Model):
+    name = models.CharField(max_length=100)
+
+    class Meta:
+        app_label = "part6_demo"
 
 
-class Rollback(Exception):
-    pass
+class Product(models.Model):
+    name = models.CharField(max_length=200)
+    category = models.ForeignKey(Category, on_delete=models.CASCADE)
+    price = models.DecimalField(max_digits=10, decimal_places=2)
+    max_allowed_price = models.DecimalField(max_digits=10, decimal_places=2)
+    stock_quantity = models.IntegerField(default=0)
+    reorder_level = models.IntegerField(default=10)  # Minimum stock threshold
+    is_promotional = models.BooleanField(default=False)
+    status = models.CharField(max_length=50)  # 'NORMAL', 'DISCOUNTED', 'CLEARANCE'
+    warehouse_country = models.CharField(max_length=50)
+    total_sold = models.IntegerField(default=0)
+    total_revenue = models.DecimalField(max_digits=12, decimal_places=2, default=0.00)
+
+    class Meta:
+        app_label = "part6_demo"
+
+
+def create_tables():
+    with connection.schema_editor() as editor:
+        editor.create_model(Category)
+        editor.create_model(Product)
 
 
 # ------------------------------------------------------------ print helpers
@@ -60,8 +88,6 @@ def product_rows(qs):
 
 # ------------------------------------------------------------ sample data
 def seed():
-    Product.objects.all().delete()
-    Category.objects.all().delete()
     elec = Category.objects.create(name="Electronics")
     gadg = Category.objects.create(name="Gadgets")
     home = Category.objects.create(name="Home")
@@ -137,6 +163,7 @@ def purchase(product_id, qty):
 
 
 def run():
+    create_tables()
     seed()
     checks = []
 
@@ -204,14 +231,8 @@ def run():
     title("SELF-CHECK")
     for label, ok in checks:
         print(f"  [{'PASS' if ok else 'FAIL'}] {label}")
-
-    if not KEEP:
-        raise Rollback
+    print("\n(Temporary in-memory database: nothing was saved, so you can run this again.)")
 
 
 if __name__ == "__main__":
-    try:
-        with transaction.atomic():
-            run()
-    except Rollback:
-        print("\n(Demo mode: all changes were rolled back, so you can run this again. Use --keep to save them.)")
+    run()
